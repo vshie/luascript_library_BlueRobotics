@@ -1,5 +1,5 @@
 local analog_in = analog:channel()
-if not analog_in:set_pin(2) then -- typically 13 is the battery input
+if not analog_in:set_pin(2) then -- typically 13 is the battery input. Pin 3 is the 3.3V Navigator ADC input, pin 2 is the 6.6V navigator input
   gcs:send_text(0, "Invalid analog pin")
 end
 function payload_rise_detected()
