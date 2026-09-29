@@ -37,14 +37,10 @@ end
 local DRFT_ENABLE    = bind_add_param("ENABLE", 1, 1)
 -- DRFT_RADIUS: drift radius in meters; drive back once this far from center
 local DRFT_RADIUS    = bind_add_param("RADIUS", 2, 20)
--- DRFT_ARRIVE: distance in meters from the return target at which motors stop
+-- DRFT_ARRIVE: distance in meters from the center at which motors stop
 local DRFT_ARRIVE    = bind_add_param("ARRIVE", 3, 3)
 -- DRFT_SPEED: return speed in m/s (0 = use WP_SPEED)
 local DRFT_SPEED     = bind_add_param("SPEED", 4, 0)
--- DRFT_OVERSHOOT: 0..0.8, fraction of radius to aim past the center, on the
--- side opposite where the boat left the circle (i.e. upwind/up-current). This
--- makes each drift cover up to (1 + OVERSHOOT) * RADIUS, so motors run less often.
-local DRFT_OVERSHOOT = bind_add_param("OVERSHOOT", 5, 0)
 -- DRFT_DEBUG: 1 = send DRFT_DIST / DRFT_STATE named floats to the GCS
 local DRFT_DEBUG     = bind_add_param("DEBUG", 6, 1)
 
@@ -58,8 +54,7 @@ local STATE_DRIFTING = 1
 local STATE_RETURN   = 2
 
 local state = STATE_IDLE
-local center = nil          -- Location where drift loiter was triggered
-local target = nil          -- Location we drive back to (center, or center + overshoot)
+local center = nil          -- Location where drift loiter was triggered; fixed until stopped
 local target_sent = false
 local expected_mode = -1    -- the mode this script last set
 local mode_set_ms = 0
@@ -97,7 +92,6 @@ local function stop(msg)
   if msg then send(6, msg) end
   state = STATE_IDLE
   center = nil
-  target = nil
   expected_mode = -1
 end
 
@@ -122,24 +116,7 @@ local function start(reason)
   return true
 end
 
--- pick the return point: the center, optionally pushed past it on the side
--- opposite to where the boat left the circle
-local function compute_target(loc)
-  local tgt = center:copy()
-  local overshoot = math.min(math.max(DRFT_OVERSHOOT:get(), 0), 0.8)
-  if overshoot > 0 then
-    local ne = center:get_distance_NE(loc)  -- vector center -> boat (m)
-    local len = ne:length()
-    if len > 0.1 then
-      local d = overshoot * radius_m()
-      tgt:offset(-ne:x() / len * d, -ne:y() / len * d)
-    end
-  end
-  return tgt
-end
-
 local function start_return(loc)
-  target = compute_target(loc)
   target_sent = false
   return_start_ms = millis()
   cycle_count = cycle_count + 1
@@ -234,14 +211,14 @@ local function update()
     if mode ~= MODE_GUIDED then
       set_mode(MODE_GUIDED)  -- retry until GUIDED is active
     elseif not target_sent then
-      if vehicle:set_target_location(target) then
+      if vehicle:set_target_location(center) then
         target_sent = true
         if DRFT_SPEED:get() > 0 then
           vehicle:set_desired_speed(DRFT_SPEED:get())
         end
       end
     end
-    if target_sent and loc:get_distance(target) <= arrive_m() then
+    if target_sent and dist <= arrive_m() then
       send(6, string.format("arrived in %.0fs, motors off", (now - return_start_ms) * 0.001))
       start_drift()
     end
